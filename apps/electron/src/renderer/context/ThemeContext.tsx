@@ -106,12 +106,15 @@ export function ThemeProvider({
   const [font, setFontState] = useState<FontFamily>(stored?.font ?? defaultFont)
   const [systemPreference, setSystemPreference] = useState<'light' | 'dark'>(getSystemPreference)
   const [previewColorTheme, setPreviewColorTheme] = useState<string | null>(null)
+  const [isConfigThemeLoaded, setIsConfigThemeLoaded] = useState(() => !window.electronAPI?.getColorTheme)
 
   // === Workspace-level theme override ===
   const [workspaceColorTheme, setWorkspaceColorThemeState] = useState<string | null>(null)
 
   // Track if we're receiving an external update to prevent echo broadcasts
   const isExternalUpdate = useRef(false)
+  const modeRef = useRef(mode)
+  const fontRef = useRef(font)
 
   // === Preset theme state (singleton) ===
   const [presetTheme, setPresetTheme] = useState<ThemeFile | null>(null)
@@ -121,6 +124,41 @@ export function ThemeProvider({
   // Effective theme: preview > workspace override > app default
   const effectiveColorTheme = previewColorTheme ?? workspaceColorTheme ?? colorTheme
   const isDarkFromMode = resolvedMode === 'dark'
+
+  useEffect(() => {
+    modeRef.current = mode
+  }, [mode])
+
+  useEffect(() => {
+    fontRef.current = font
+  }, [font])
+
+  // Prefer app-level config.json colorTheme on startup (source of truth over local storage)
+  useEffect(() => {
+    let cancelled = false
+    if (!window.electronAPI?.getColorTheme) return
+
+    window.electronAPI.getColorTheme().then((themeId) => {
+      if (cancelled) return
+      if (themeId) {
+        setColorThemeState((current) => {
+          if (current === themeId) return current
+          saveTheme({ mode: modeRef.current, colorTheme: themeId, font: fontRef.current })
+          return themeId
+        })
+      }
+      setIsConfigThemeLoaded(true)
+    }).catch(() => {
+      // If config can't be read, keep local storage value as fallback
+      if (!cancelled) {
+        setIsConfigThemeLoaded(true)
+      }
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   // Load workspace theme override when workspace changes
   useEffect(() => {
@@ -349,6 +387,12 @@ export function ThemeProvider({
   const setColorTheme = useCallback((newTheme: string) => {
     setColorThemeState(newTheme)
     saveTheme({ mode, colorTheme: newTheme, font })
+    // Persist app-level default theme to ~/.craft-agent/config.json
+    if (window.electronAPI?.setColorTheme) {
+      window.electronAPI.setColorTheme(newTheme).catch((error) => {
+        console.error('Failed to persist color theme to config.json:', error)
+      })
+    }
     if (!isExternalUpdate.current && window.electronAPI?.broadcastThemePreferences) {
       window.electronAPI.broadcastThemePreferences({ mode, colorTheme: newTheme, font })
     }
@@ -384,6 +428,10 @@ export function ThemeProvider({
 
     return cleanup
   }, [activeWorkspaceId])
+
+  if (!isConfigThemeLoaded) {
+    return null
+  }
 
   return (
     <ThemeContext.Provider

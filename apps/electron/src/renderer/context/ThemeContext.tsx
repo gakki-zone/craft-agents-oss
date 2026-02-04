@@ -349,6 +349,12 @@ export function ThemeProvider({
   const setColorTheme = useCallback((newTheme: string) => {
     setColorThemeState(newTheme)
     saveTheme({ mode, colorTheme: newTheme, font })
+    // Persist app-level default theme to ~/.craft-agent/config.json
+    if (window.electronAPI?.setColorTheme) {
+      window.electronAPI.setColorTheme(newTheme).catch((error) => {
+        console.error('Failed to persist color theme to config.json:', error)
+      })
+    }
     if (!isExternalUpdate.current && window.electronAPI?.broadcastThemePreferences) {
       window.electronAPI.broadcastThemePreferences({ mode, colorTheme: newTheme, font })
     }
